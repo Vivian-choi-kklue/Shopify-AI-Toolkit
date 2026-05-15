@@ -4,7 +4,7 @@ description: "Build custom functionality that merchants can install at defined p
 compatibility: Requires Node.js
 metadata:
   author: Shopify
-  version: "1.8.0"
+  version: "1.9.0"
 ---
 
 ## Required Tool Calls (do not skip)
@@ -13,8 +13,8 @@ You have a `bash` tool. Every response must use it — in this order:
 
 1. Call `bash` with `scripts/search_docs.mjs "<query>"` — search before writing code
 2. Write the code using the search results
-3. Call `bash` with `scripts/validate.mjs --code '...' --model YOUR_MODEL_NAME --client-name YOUR_CLIENT_NAME --client-version YOUR_CLIENT_VERSION --artifact-id YOUR_ARTIFACT_ID --revision REVISION_NUMBER` — validate before returning
-   (Always include these flags. Use your actual model name for YOUR_MODEL_NAME; use claude-code/cursor/etc. for YOUR_CLIENT_NAME. For YOUR_ARTIFACT_ID, generate a stable random ID per code block and reuse it across validation retries. For REVISION_NUMBER, start at 1 and increment on each retry of the same artifact.)
+3. Call `bash` with `scripts/validate.mjs --code '...' --model YOUR_MODEL_NAME --client-name YOUR_CLIENT_NAME --client-version YOUR_CLIENT_VERSION --artifact-id YOUR_ARTIFACT_ID --revision REVISION_NUMBER --target <extension-target>` — validate before returning
+   (Always include these flags. Use your actual model name for YOUR_MODEL_NAME; use claude-code/cursor/etc. for YOUR_CLIENT_NAME. For YOUR_ARTIFACT_ID, generate a stable random ID per code block and reuse it across validation retries. For REVISION_NUMBER, start at 1 and increment on each retry of the same artifact.) Pass `--target` with the customer-account extension target this code runs in (e.g. `customer-account.order-status.block.render`); validation will fail without it.
 4. If validation fails: search for the error type, fix, re-validate (max 3 retries)
 5. Return code only after validation passes
 
@@ -116,7 +116,7 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
 <s-banner heading="Notice" tone="info" dismissible collapsible
   >Message content</s-banner
 >
-<s-box padding="base" background="subdued" border="base" border-radius="base"
+<s-box padding="base" background="subdued" border="base" borderRadius="base"
   >Content</s-box
 >
 <s-button variant="primary" tone="auto" type="submit">Save</s-button>
@@ -125,7 +125,7 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
   ><s-button variant="secondary">Cancel</s-button></s-button-group
 >
 <s-checkbox label="Accept terms" name="terms" value="accepted"></s-checkbox>
-<s-chip accessibility-label="Tag">Category</s-chip>
+<s-chip accessibilityLabel="Tag">Category</s-chip>
 <s-choice-list label="Options" name="options"
   ><s-choice value="1">Option 1</s-choice
   ><s-choice value="2">Option 2</s-choice></s-choice-list
@@ -133,7 +133,7 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
 <s-clickable href="/orders/42" padding="base" background="subdued"
   >Click area</s-clickable
 >
-<s-clickable-chip removable accessibility-label="Filter"
+<s-clickable-chip removable accessibilityLabel="Filter"
   >Active</s-clickable-chip
 >
 <s-clipboard-item text="ABC123" />
@@ -182,7 +182,7 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
   ><s-text-field label="Name" name="name"></s-text-field
   ><s-button type="submit">Submit</s-button></s-form
 >
-<s-grid grid-template-columns="1fr 1fr" gap="base"
+<s-grid gridTemplateColumns="1fr 1fr" gap="base"
   ><s-grid-item><s-text>Col 1</s-text></s-grid-item
   ><s-grid-item><s-text>Col 2</s-text></s-grid-item></s-grid
 >
@@ -191,29 +191,29 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
 <s-image
   src="https://example.com/image.png"
   alt="Description"
-  aspect-ratio="16/9"
-  object-fit="cover"
+  aspectRatio="16/9"
+  objectFit="cover"
   loading="lazy"
 ></s-image>
-<s-image-group total-items="6"
+<s-image-group totalItems="6"
   ><s-image src="https://example.com/1.jpg" alt="Image 1"></s-image
   ><s-image src="https://example.com/2.jpg" alt="Image 2"></s-image
 ></s-image-group>
 <s-link href="https://example.com" tone="auto">Link text</s-link>
 <s-map
-  api-key="KEY"
+  apiKey="KEY"
   latitude="{43.65}"
   longitude="{-79.38}"
   zoom="{12}"
-  accessibility-label="Store location"
+  accessibilityLabel="Store location"
   ><s-map-marker
     latitude="{43.65}"
     longitude="{-79.38}"
-    accessibility-label="Store"
+    accessibilityLabel="Store"
   ></s-map-marker
 ></s-map>
-<s-button command-for="actions-menu"></s-button>
-<s-menu id="actions-menu" accessibility-label="Actions"
+<s-button commandFor="actions-menu"></s-button>
+<s-menu id="actions-menu" accessibilityLabel="Actions"
   ><s-button variant="secondary">Edit</s-button></s-menu
 >
 <s-modal id="my-modal" heading="Title" size="base"
@@ -231,7 +231,7 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
   min="{1}"
   max="{100}"
   step="{1}"
-  input-mode="numeric"
+  inputMode="numeric"
 ></s-number-field>
 <s-ordered-list
   ><s-list-item>First</s-list-item
@@ -245,15 +245,15 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
   label="Password"
   name="password"
   autocomplete="current-password"
-  min-length="8"
+  minLength="8"
   required
 ></s-password-field>
-<s-payment-icon type="visa" accessibility-label="Visa"></s-payment-icon>
+<s-payment-icon type="visa" accessibilityLabel="Visa"></s-payment-icon>
 <s-phone-field label="Phone" name="phone" autocomplete="tel"></s-phone-field>
-<s-popover id="pop" inline-size="300px"
+<s-popover id="pop" inlineSize="300px"
   ><s-box padding="base"><s-text>Popover content</s-text></s-box></s-popover
 >
-<s-press-button accessibility-label="Favorite" pressed>★</s-press-button>
+<s-press-button accessibilityLabel="Favorite" pressed>★</s-press-button>
 <s-product-thumbnail
   src="https://example.com/product.jpg"
   alt="Blue T-Shirt"
@@ -263,16 +263,16 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
   value="{75}"
   max="{100}"
   tone="auto"
-  accessibility-label="75% complete"
+  accessibilityLabel="75% complete"
 ></s-progress>
 <s-qr-code
   content="https://example.com"
   size="base"
   border="base"
-  accessibility-label="Scan to visit"
+  accessibilityLabel="Scan to visit"
 ></s-qr-code>
-<s-query-container container-name="main">Content</s-query-container>
-<s-scroll-box block-size="200px" overflow="auto" padding="base"
+<s-query-container containerName="main">Content</s-query-container>
+<s-scroll-box blockSize="200px" overflow="auto" padding="base"
   >Scrollable content</s-scroll-box
 >
 <s-section heading="Details"><s-text>Section content</s-text></s-section>
@@ -283,8 +283,8 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
   ><s-text>Sheet content</s-text></s-sheet
 >
 <s-skeleton-paragraph content="Loading text..."></s-skeleton-paragraph>
-<s-spinner size="base" accessibility-label="Loading"></s-spinner>
-<s-stack direction="inline" gap="base" align-items="center"
+<s-spinner size="base" accessibilityLabel="Loading"></s-spinner>
+<s-stack direction="inline" gap="base" alignItems="center"
   ><s-text>Item 1</s-text><s-text>Item 2</s-text></s-stack
 >
 <s-switch label="Enable" name="enabled" checked></s-switch>
@@ -293,11 +293,11 @@ Refer to the developer documentation to find all valid values for a prop. Ensure
   label="Description"
   name="desc"
   rows="{4}"
-  max-length="{500}"
+  maxLength="{500}"
 ></s-text-area>
 <s-text-field label="Name" name="name" icon="profile" required></s-text-field>
-<s-time date-time="2025-03-15T10:30:00Z">March 15, 2025</s-time>
-<s-icon type="info" interest-for="my-tip"></s-icon
+<s-time dateTime="2025-03-15T10:30:00Z">March 15, 2025</s-time>
+<s-icon type="info" interestFor="my-tip"></s-icon
 ><s-tooltip id="my-tip">Hover for info</s-tooltip>
 <s-unordered-list
   ><s-list-item>Item A</s-list-item
@@ -329,10 +329,10 @@ When the user asks for Polaris web components (e.g. `s-banner`, `s-badge`, `s-bu
 
 **Web component attribute rules:**
 
-- Use **kebab-case** attribute names: `align-items`, `padding-block`, `border-radius` — NOT camelCase (`alignItems`, `paddingBlock`)
+- Use **camelCase** attribute names: `alignItems`, `paddingBlock`, `borderRadius` — NOT kebab-case (`align-items`, `padding-block`)
 - **Boolean attributes** (`disabled`, `loading`, `dismissible`, `checked`, `defaultChecked`, `required`) accept shorthand or `{expression}`:
   - ✅ `<s-checkbox checked={isSelected} />`, `<s-button disabled>`, `<s-banner dismissible>`
-- **String keyword attributes** (`padding`, `gap`, `direction`, `tone`, `variant`, `size`, `background`, `align-items`) must be string values — never shorthand or `{true}`:
+- **String keyword attributes** (`padding`, `gap`, `direction`, `tone`, `variant`, `size`, `background`, `alignItems`) must be string values — never shorthand or `{true}`:
   - ✅ `<s-box padding="base">`, `<s-stack gap="loose" direction="block">`, `<s-badge tone="success">`
   - ❌ `<s-box padding>`, `<s-stack gap={true}>` — boolean shorthand on string props fails TypeScript
 ---
@@ -357,8 +357,10 @@ scripts/search_docs.mjs "s-card customer-account" --model YOUR_MODEL_NAME --clie
 You MUST run `scripts/validate.mjs` before returning any generated code to the user. Always include the instrumentation flags:
 
 ```
-scripts/validate.mjs --code '...' --model YOUR_MODEL_NAME --client-name YOUR_CLIENT_NAME --client-version YOUR_CLIENT_VERSION --artifact-id YOUR_ARTIFACT_ID --revision REVISION_NUMBER
+scripts/validate.mjs --code '...' --model YOUR_MODEL_NAME --client-name YOUR_CLIENT_NAME --client-version YOUR_CLIENT_VERSION --artifact-id YOUR_ARTIFACT_ID --revision REVISION_NUMBER --target <extension-target>
 ```
+
+**`--target` is required for customer-account extensions.** Pass the extension target this code runs in (e.g. `customer-account.order-status.block.render`). If you don't know which target applies, run `scripts/search_docs.mjs "extension targets"` first to look one up — validation will fail without it.
 (For YOUR_ARTIFACT_ID, generate a stable random ID per code block and reuse it across validation retries. For REVISION_NUMBER, start at 1 and increment on each retry of the same artifact.)
 
 **When validation fails, follow this loop:**
@@ -375,4 +377,8 @@ scripts/validate.mjs --code '...' --model YOUR_MODEL_NAME --client-name YOUR_CLI
 
 ---
 
-> **Privacy notice:** `scripts/validate.mjs` reports anonymized validation results (pass/fail and skill name) to Shopify to help improve these tools. Set `OPT_OUT_INSTRUMENTATION=true` in your environment to opt out.
+> **Privacy notice:** `scripts/search_docs.mjs` reports the search query, search response or error text, skill name/version, and model/client identifiers to Shopify (`shopify.dev/mcp/usage`) to help improve these tools. Set `OPT_OUT_INSTRUMENTATION=true` in your environment to opt out.
+
+---
+
+> **Privacy notice:** `scripts/validate.mjs` reports the validation result, skill name/version, model/client identifiers, the validated code when present, and validator-specific context such as API name, extension target, filename, file type, theme path, file list, artifact ID, and revision to Shopify (`shopify.dev/mcp/usage`) to help improve these tools. Set `OPT_OUT_INSTRUMENTATION=true` in your environment to opt out.

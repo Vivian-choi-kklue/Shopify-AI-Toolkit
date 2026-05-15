@@ -3,8 +3,91 @@
 // src/agent-skills/scripts/search_docs.ts
 import { parseArgs } from "util";
 
+// src/http/index.ts
+var PROD_BASE_URL = "https://shopify.dev/";
+var SHOP_DEV_BASE_URL = "https://shopify-dev.shop.dev/";
+function stagingHost(serverNumber) {
+  return `https://shopify-dev-staging${serverNumber}.shopifycloud.com/`;
+}
+function resolveShopifyDevBaseUrl(options) {
+  const env = options?.env ?? process.env;
+  const stagingRaw = env.SHOPIFY_DEV_STAGING_SERVER_NUMBER?.trim();
+  if (stagingRaw) {
+    if (!/^\d+$/.test(stagingRaw)) {
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`
+      );
+    }
+    const serverNumber = Number(stagingRaw);
+    if (!Number.isSafeInteger(serverNumber) || serverNumber <= 0) {
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`
+      );
+    }
+    const token = env.MINERVA_TOKEN;
+    if (!token) {
+      const audience = stagingHost(serverNumber).replace(/\/$/, "");
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER=${serverNumber} is set but no Minerva token is available. Staging servers are behind Minerva. Get a token via:
+  export MINERVA_TOKEN=$(devx minerva-auth --client-id 0oa1bphetnkOusboI0x8 --audience ${audience})`
+      );
+    }
+    return {
+      url: stagingHost(serverNumber),
+      headers: { Cookie: `MINERVA_TOKEN=${token}` }
+    };
+  }
+  const instrumentationOverride = env.SHOPIFY_DEV_INSTRUMENTATION_URL?.trim();
+  if (instrumentationOverride && options?.uri?.startsWith("/mcp/usage")) {
+    return { url: instrumentationOverride, headers: {} };
+  }
+  if (env.DEV && env.DEV !== "false") {
+    return { url: SHOP_DEV_BASE_URL, headers: {} };
+  }
+  return { url: PROD_BASE_URL, headers: {} };
+}
+async function shopifyDevFetch(uri, options) {
+  let url;
+  let resolvedHeaders = {};
+  if (uri.startsWith("http://") || uri.startsWith("https://")) {
+    url = new URL(uri);
+  } else {
+    const resolved = resolveShopifyDevBaseUrl({ uri });
+    url = new URL(uri, resolved.url);
+    resolvedHeaders = resolved.headers;
+  }
+  if (options?.parameters) {
+    Object.entries(options.parameters).forEach(([key, value]) => {
+      url.searchParams.append(key, value);
+    });
+  }
+  const response = await fetch(url.toString(), {
+    method: options?.method || "GET",
+    headers: {
+      Accept: "application/json",
+      "Cache-Control": "no-cache",
+      "X-Shopify-Surface": "mcp",
+      "X-Shopify-MCP-Version": options?.instrumentation?.packageVersion || "",
+      "X-Shopify-Timestamp": options?.instrumentation?.timestamp || "",
+      ...resolvedHeaders,
+      ...options?.headers
+    },
+    ...options?.body && { body: options.body }
+  });
+  if (!response.ok) {
+    let errorBody;
+    try {
+      errorBody = await response.text();
+    } catch {
+    }
+    throw new Error(
+      errorBody ? `HTTP ${response.status}: ${errorBody}` : `HTTP error! status: ${response.status}`
+    );
+  }
+  return await response.text();
+}
+
 // src/agent-skills/scripts/instrumentation.ts
-var SHOPIFY_DEV_BASE_URL = process.env.SHOPIFY_DEV_INSTRUMENTATION_URL || "https://shopify.dev/";
 function isInstrumentationDisabled() {
   try {
     return process.env.OPT_OUT_INSTRUMENTATION === "true";
@@ -16,31 +99,30 @@ async function reportValidation(toolName, result, context) {
   if (isInstrumentationDisabled()) return;
   const { model, clientName, clientVersion, ...remainingContext } = context ?? {};
   try {
-    const url = new URL("/mcp/usage", SHOPIFY_DEV_BASE_URL);
     const headers = {
       "Content-Type": "application/json",
-      Accept: "application/json",
-      "Cache-Control": "no-cache",
-      "X-Shopify-Surface": "skills",
-      "X-Shopify-MCP-Version": "1.8.0",
-      "X-Shopify-Timestamp": (/* @__PURE__ */ new Date()).toISOString()
+      "X-Shopify-Surface": "skills"
     };
     if (clientName) headers["X-Shopify-Client-Name"] = String(clientName);
     if (clientVersion)
       headers["X-Shopify-Client-Version"] = String(clientVersion);
     if (model) headers["X-Shopify-Client-Model"] = String(model);
-    await fetch(url.toString(), {
+    await shopifyDevFetch("/mcp/usage", {
       method: "POST",
       headers,
       body: JSON.stringify({
         tool: toolName,
         parameters: {
           skill: "shopify-hydrogen",
-          skillVersion: "1.8.0",
+          skillVersion: "1.9.0",
           ...remainingContext
         },
         result
-      })
+      }),
+      instrumentation: {
+        packageVersion: "1.9.0",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      }
     });
   } catch {
   }
@@ -62,27 +144,21 @@ if (!query) {
   );
   process.exit(1);
 }
-var SHOPIFY_DEV_BASE_URL2 = "https://shopify.dev/";
 async function performSearch(query2, apiName) {
   const body = { query: query2 };
   if (apiName) body.api_name = apiName;
-  const url = new URL("/assistant/search", SHOPIFY_DEV_BASE_URL2);
-  const response = await fetch(url.toString(), {
+  const responseText = await shopifyDevFetch("/assistant/search", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Accept: "application/json",
       "X-Shopify-Surface": "skills"
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
+    instrumentation: {
+      packageVersion: "1.9.0",
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    }
   });
-  if (!response.ok) {
-    const errorBody = await response.text().catch(() => "");
-    throw new Error(
-      errorBody ? `HTTP ${response.status}: ${errorBody}` : `HTTP error! status: ${response.status}`
-    );
-  }
-  const responseText = await response.text();
   try {
     const jsonData = JSON.parse(responseText);
     return JSON.stringify(jsonData, null, 2);

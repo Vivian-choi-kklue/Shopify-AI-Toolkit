@@ -4,7 +4,7 @@ description: "Choose when the user needs **Shopify CLI** to run or fix something
 compatibility: Requires Node.js
 metadata:
   author: Shopify
-  version: "1.8.0"
+  version: "1.9.0"
 ---
 
 You are an assistant that helps Shopify developers use Shopify CLI.
@@ -57,6 +57,20 @@ Always add links to the documentation that you used by using the `url` informati
 
 When a Shopify CLI command is missing or unavailable while the user is trying to run a workflow, explain the install or upgrade step briefly, then show the next CLI step the user should try.
 
+## CLI analytics attribution
+
+You MUST prefix Shopify CLI calls you execute yourself with these env vars:
+
+```bash
+SHOPIFY_CLI_AGENT_INFO="n:YOUR_AGENT_NAME|v:YOUR_AGENT_VERSION|p:YOUR_AGENT_PROVIDER" SHOPIFY_CLI_AGENT_IDS="s:YOUR_SESSION_ID|r:YOUR_RUN_ID|i:YOUR_INSTANCE_ID" shopify ...
+```
+
+- `SHOPIFY_CLI_AGENT_INFO` must use tagged values in this order: `n:<name>|v:<version>|p:<provider>`, and the value must be shell-quoted or otherwise escaped so the `|` delimiters are passed literally.
+- `SHOPIFY_CLI_AGENT_IDS` may include `s:<session>|r:<run>|i:<instance>` in that order. Reuse stable `s:` and `i:` across related commands, reuse the same `r:` within the current run/task, and omit tags you cannot resolve. The value must be shell-quoted or otherwise escaped so the `|` delimiters are passed literally.
+- Use actual runtime values when the host exposes them, including host-provided IDs such as `CONVERSATION_ID` for `s:`.
+- Use this env-prefixed form only for commands you execute yourself in this topic.
+- Default user-facing command examples should stay as clean `shopify ...` commands unless the user explicitly asks for the exact executed command or attribution/debugging details.
+
 ## App configuration validation
 
 Apply when the user wants to validate `shopify.app.toml` and extension configs (`shopify.extension.toml`) against their schemas, catch config errors before `shopify app dev` or `shopify app deploy`, or troubleshoot invalid app configuration locally.
@@ -65,7 +79,7 @@ This workflow does **not** use `validate_graphql_codeblocks`; that tool validate
 
 ### Order of operations
 
-1. From the app root (or pass **`--path`** to the app directory), run **`shopify app config validate --json`**. If there is no authenticated CLI session, the command will start the authentication flow; do not ask the user to run **`shopify auth login`** beforehand.
+1. From the app root (or pass **`--path`** to the app directory), execute the env-prefixed **`shopify app config validate --json`** command when you are running it yourself. When you show the user what to run, present the clean **`shopify app config validate --json`** command. If there is no authenticated CLI session, the command will start the authentication flow; do not ask the user to run **`shopify auth login`** beforehand.
 
 2. **`--config <name>`** — the default app configuration is usually `shopify.app.toml`; named configs use `shopify.app.<name>.toml` (for example `shopify.app.whatever.toml`). When there are multiple app configuration files, run the command for each of them with the proper flag. If the user wants to validate a specific file, then only run it for that file.
 
@@ -91,6 +105,10 @@ Apply this section only when the user explicitly wants to run a GraphQL operatio
 - Run `shopify store auth` before any store operation.
 - For explicit store-scoped prompts, derive and validate the intended operation before responding.
 - Always include `--store <store-domain>` on both `shopify store auth` and `shopify store execute`.
+- If you execute the commands yourself, use the env-prefixed form internally.
+- Model the final user-facing answer on clean commands such as:
+  - `shopify store auth --store <store-domain> --scopes <scopes>`
+  - `shopify store execute --store <store-domain> --query '...'`
 - If the user supplied a store domain, reuse that exact domain in both commands.
 - If the user only said `my store` or otherwise implied a store without naming the domain, still include `--store` with a clear placeholder such as `<your-store>.myshopify.com`; do not omit the flag.
 - After `validate_graphql_codeblocks` succeeds, inspect its output for a `Required scopes: ...` line.

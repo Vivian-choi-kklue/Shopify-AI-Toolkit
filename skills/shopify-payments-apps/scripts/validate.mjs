@@ -17344,6 +17344,16 @@ var SHOPIFY_APIS = defineApis({
     visibility: Visibility.PUBLIC,
     searchable: false
   },
+  ucp: {
+    displayName: "UCP CLI",
+    description: 'Use when the user wants to use the UCP CLI to find, compare, buy, or track products from online merchants, or to set up and troubleshoot the local UCP profile required for merchant-scoped operations. Covers global catalog search ("find me X under $Y"), named-merchant transactions ("buy this from Z.com"), order tracking, `ucp profile init`, `ucp doctor`, carts, checkout, orders, and UCP setup/help. Falls back to merchant-hosted handoff when direct in-protocol checkout isn\'t available.',
+    category: APICategory.EXECUTION,
+    visibility: Visibility.PUBLIC,
+    searchable: false,
+    skillName: "ucp",
+    compatibility: "Requires UCP CLI",
+    frontmatterExtras: { requires_bin: "ucp", command: "ucp" }
+  },
   admin: {
     displayName: "Admin API",
     description: "Write or explain **Admin GraphQL** queries and mutations for apps and integrations that extend the Shopify admin. Use when the user wants to **understand, design, or generate** the operation itself\u2014even before deciding how to run it. Do **not** choose `admin` first for **app or extension config validation** \u2014use **`use-shopify-cli`**. Do **not** choose `admin` first to **execute** Admin GraphQL **now via Shopify CLI** or for CLI setup/troubleshooting on store workflows\u2014use **`use-shopify-cli`** (store auth/execute, handle/SKU/location lookups, inventory changes).",
@@ -17376,8 +17386,8 @@ var SHOPIFY_APIS = defineApis({
     schemaSource: { shopifyDevPrefix: "partner" },
     validation: true,
     exampleVectorStoreQuery: {
-      query: "app installations query",
-      context: "app install data"
+      query: "transactions query",
+      context: "partner transaction history"
     }
   },
   customer: {
@@ -17544,9 +17554,10 @@ var SHOPIFY_APIS = defineApis({
     visibility: Visibility.PUBLIC,
     validation: true,
     exampleVectorStoreQuery: {
-      query: "s-text-field",
-      context: "text input in an admin extension"
-    }
+      query: "admin.product-details.block.render",
+      context: "admin extension target for product details blocks"
+    },
+    exampleExtensionTarget: "admin.product-details.block.render"
   },
   "polaris-checkout-extensions": {
     displayName: "Polaris Checkout Extensions",
@@ -17561,7 +17572,8 @@ var SHOPIFY_APIS = defineApis({
     exampleVectorStoreQuery: {
       query: "s-button checkout",
       context: "checkout button"
-    }
+    },
+    exampleExtensionTarget: "purchase.checkout.block.render"
   },
   "polaris-customer-account-extensions": {
     displayName: "Polaris Customer Account Extensions",
@@ -17576,7 +17588,8 @@ var SHOPIFY_APIS = defineApis({
     exampleVectorStoreQuery: {
       query: "s-card customer-account",
       context: "customer account card"
-    }
+    },
+    exampleExtensionTarget: "customer-account.order-status.block.render"
   },
   "pos-ui": {
     displayName: "POS UI",
@@ -17589,9 +17602,10 @@ var SHOPIFY_APIS = defineApis({
     visibility: Visibility.PUBLIC,
     validation: true,
     exampleVectorStoreQuery: {
-      query: "s-screen-layout",
-      context: "POS screen layout"
-    }
+      query: "pos.home.tile.render",
+      context: "POS home tile extension target"
+    },
+    exampleExtensionTarget: "pos.customer-details.block.render"
   },
   hydrogen: {
     displayName: "Hydrogen",
@@ -17942,6 +17956,13 @@ function getRootTypeName(operation, schemaName = "admin") {
   }
   return operation === "mutation" ? "Mutation" : "Query";
 }
+function formatScopes(scopes) {
+  if (!scopes || scopes.length === 0) {
+    return "";
+  }
+  return `
+Required scopes: ${scopes.join(", ")}`;
+}
 
 // src/validation/index.ts
 function isAPIVersionWithAPI(options) {
@@ -18005,6 +18026,11 @@ async function validateGraphQLOperation(graphqlCode, api, options) {
     offlineScopeData: offlineScopes,
     failOnDeprecated
   });
+}
+function hasFailedValidation(responses) {
+  return responses.some(
+    (response) => response.result === "failed" /* FAILED */
+  );
 }
 async function loadAndBuildGraphQLSchema(apiVersion) {
   if (!apiVersion || Object.keys(apiVersion).length === 0) {
@@ -18146,8 +18172,165 @@ async function performGraphQLValidation(options) {
   };
 }
 
+// src/validation/format.ts
+import { randomUUID } from "crypto";
+function extractArtifactsFromItems(items) {
+  return items.map((item) => ({
+    artifactId: item.artifactId || `artifact-${randomUUID()}`,
+    revision: item.revision ?? 1
+  }));
+}
+function attachArtifactIds(responses, artifacts) {
+  return responses.map((r, idx) => {
+    const artifact = artifacts[idx];
+    if (!artifact) {
+      return r;
+    }
+    return {
+      ...r,
+      artifactId: artifact.artifactId,
+      artifactRevision: artifact.revision
+    };
+  });
+}
+function formatValidationResult(result, itemName = "Items") {
+  const hasFailed = hasFailedValidation(result);
+  const hasInform = result.some((r) => r.result === "inform" /* INFORM */);
+  let overallStatus;
+  if (hasFailed) {
+    overallStatus = "\u274C INVALID";
+  } else if (hasInform) {
+    overallStatus = "\u26A0\uFE0F VALID (with deprecated fields)";
+  } else {
+    overallStatus = "\u2705 VALID";
+  }
+  let responseText = `## Validation Summary
+
+`;
+  responseText += `**Overall Status:** ${overallStatus}
+`;
+  responseText += `**Total ${itemName}:** ${result.length}
+
+`;
+  responseText += `## Detailed Results
+
+`;
+  result.forEach((check, index) => {
+    let statusIcon;
+    if (check.result === "success" /* SUCCESS */) {
+      statusIcon = "\u2705";
+    } else if (check.result === "inform" /* INFORM */) {
+      statusIcon = "\u26A0\uFE0F";
+    } else {
+      statusIcon = "\u274C";
+    }
+    responseText += `### ${itemName.slice(0, -1)} ${index + 1}
+`;
+    if (check.artifactId) {
+      responseText += `**Artifact ID:** ${check.artifactId}`;
+      if (check.artifactRevision) {
+        responseText += `
+**Revision:** ${check.artifactRevision}`;
+      }
+      responseText += `
+*Use same ID & increment revision when retrying on an improvement of this artifact*
+
+`;
+    }
+    responseText += `**Status:** ${statusIcon} ${check.result.toUpperCase()}
+`;
+    responseText += `**Details:** ${check.resultDetail}
+
+`;
+  });
+  return responseText;
+}
+
+// src/http/index.ts
+var PROD_BASE_URL = "https://shopify.dev/";
+var SHOP_DEV_BASE_URL = "https://shopify-dev.shop.dev/";
+function stagingHost(serverNumber) {
+  return `https://shopify-dev-staging${serverNumber}.shopifycloud.com/`;
+}
+function resolveShopifyDevBaseUrl(options) {
+  const env = options?.env ?? process.env;
+  const stagingRaw = env.SHOPIFY_DEV_STAGING_SERVER_NUMBER?.trim();
+  if (stagingRaw) {
+    if (!/^\d+$/.test(stagingRaw)) {
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`
+      );
+    }
+    const serverNumber = Number(stagingRaw);
+    if (!Number.isSafeInteger(serverNumber) || serverNumber <= 0) {
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`
+      );
+    }
+    const token = env.MINERVA_TOKEN;
+    if (!token) {
+      const audience = stagingHost(serverNumber).replace(/\/$/, "");
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER=${serverNumber} is set but no Minerva token is available. Staging servers are behind Minerva. Get a token via:
+  export MINERVA_TOKEN=$(devx minerva-auth --client-id 0oa1bphetnkOusboI0x8 --audience ${audience})`
+      );
+    }
+    return {
+      url: stagingHost(serverNumber),
+      headers: { Cookie: `MINERVA_TOKEN=${token}` }
+    };
+  }
+  const instrumentationOverride = env.SHOPIFY_DEV_INSTRUMENTATION_URL?.trim();
+  if (instrumentationOverride && options?.uri?.startsWith("/mcp/usage")) {
+    return { url: instrumentationOverride, headers: {} };
+  }
+  if (env.DEV && env.DEV !== "false") {
+    return { url: SHOP_DEV_BASE_URL, headers: {} };
+  }
+  return { url: PROD_BASE_URL, headers: {} };
+}
+async function shopifyDevFetch(uri, options) {
+  let url;
+  let resolvedHeaders = {};
+  if (uri.startsWith("http://") || uri.startsWith("https://")) {
+    url = new URL(uri);
+  } else {
+    const resolved = resolveShopifyDevBaseUrl({ uri });
+    url = new URL(uri, resolved.url);
+    resolvedHeaders = resolved.headers;
+  }
+  if (options?.parameters) {
+    Object.entries(options.parameters).forEach(([key, value]) => {
+      url.searchParams.append(key, value);
+    });
+  }
+  const response = await fetch(url.toString(), {
+    method: options?.method || "GET",
+    headers: {
+      Accept: "application/json",
+      "Cache-Control": "no-cache",
+      "X-Shopify-Surface": "mcp",
+      "X-Shopify-MCP-Version": options?.instrumentation?.packageVersion || "",
+      "X-Shopify-Timestamp": options?.instrumentation?.timestamp || "",
+      ...resolvedHeaders,
+      ...options?.headers
+    },
+    ...options?.body && { body: options.body }
+  });
+  if (!response.ok) {
+    let errorBody;
+    try {
+      errorBody = await response.text();
+    } catch {
+    }
+    throw new Error(
+      errorBody ? `HTTP ${response.status}: ${errorBody}` : `HTTP error! status: ${response.status}`
+    );
+  }
+  return await response.text();
+}
+
 // src/agent-skills/scripts/instrumentation.ts
-var SHOPIFY_DEV_BASE_URL = process.env.SHOPIFY_DEV_INSTRUMENTATION_URL || "https://shopify.dev/";
 function isInstrumentationDisabled() {
   try {
     return process.env.OPT_OUT_INSTRUMENTATION === "true";
@@ -18159,31 +18342,30 @@ async function reportValidation(toolName, result, context) {
   if (isInstrumentationDisabled()) return;
   const { model, clientName, clientVersion, ...remainingContext } = context ?? {};
   try {
-    const url = new URL("/mcp/usage", SHOPIFY_DEV_BASE_URL);
     const headers = {
       "Content-Type": "application/json",
-      Accept: "application/json",
-      "Cache-Control": "no-cache",
-      "X-Shopify-Surface": "skills",
-      "X-Shopify-MCP-Version": "1.8.0",
-      "X-Shopify-Timestamp": (/* @__PURE__ */ new Date()).toISOString()
+      "X-Shopify-Surface": "skills"
     };
     if (clientName) headers["X-Shopify-Client-Name"] = String(clientName);
     if (clientVersion)
       headers["X-Shopify-Client-Version"] = String(clientVersion);
     if (model) headers["X-Shopify-Client-Model"] = String(model);
-    await fetch(url.toString(), {
+    await shopifyDevFetch("/mcp/usage", {
       method: "POST",
       headers,
       body: JSON.stringify({
         tool: toolName,
         parameters: {
           skill: "shopify-payments-apps",
-          skillVersion: "1.8.0",
+          skillVersion: "1.9.0",
           ...remainingContext
         },
         result
-      })
+      }),
+      instrumentation: {
+        packageVersion: "1.9.0",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      }
     });
   } catch {
   }
@@ -18194,18 +18376,33 @@ var { values } = parseArgs({
   options: {
     code: { type: "string", short: "c" },
     file: { type: "string", short: "f" },
+    api: { type: "string", short: "a" },
     "artifact-id": { type: "string" },
     revision: { type: "string" },
     model: { type: "string" },
     "client-name": { type: "string" },
-    "client-version": { type: "string" }
+    "client-version": { type: "string" },
+    json: { type: "boolean" }
   },
   allowPositionals: true
 });
 var capturedCode;
-var __filename = fileURLToPath2(import.meta.url);
-var __dirname = path2.dirname(__filename);
-var schemaPath = path2.join(__dirname, "..", "assets", "payments-apps_2026-04.json.gz");
+var apiNameRaw = true ? "payments-apps" : values.api;
+if (!apiNameRaw) {
+  console.error(
+    "Required: --api <name> when running outside the bundled per-skill build."
+  );
+  process.exit(1);
+}
+var apiName = apiNameRaw;
+var schemaPath;
+if (true) {
+  const __filename = fileURLToPath2(import.meta.url);
+  const __dirname = path2.dirname(__filename);
+  schemaPath = path2.join(__dirname, "..", "assets", "payments-apps_2026-04.json.gz");
+} else {
+  schemaPath = loadAPISchema(apiName).schemaPath;
+}
 async function readOperation() {
   if (values.code) return values.code;
   if (values.file) return readFileSync2(values.file, "utf-8");
@@ -18220,53 +18417,81 @@ async function readOperation() {
   }
   return text;
 }
+function parseRevision(raw) {
+  if (!raw) return void 0;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : void 0;
+}
 async function main() {
   const code = await readOperation();
   capturedCode = code;
-  const result = await validateGraphQLOperation(
-    code,
-    "payments-apps",
+  const [artifact] = extractArtifactsFromItems([
     {
-      apiVersion: {
-        schemaPath,
-        api: "payments-apps",
-        name: "",
-        latestVersion: false
-      },
-      failOnDeprecated: false
+      artifactId: values["artifact-id"],
+      revision: parseRevision(values["revision"])
     }
+  ]);
+  const result = await validateGraphQLOperation(code, apiName, {
+    apiVersion: {
+      schemaPath,
+      api: apiName,
+      name: "",
+      latestVersion: false
+    },
+    failOnDeprecated: false
+  });
+  const { validation, scopes } = result;
+  let resultDetail = validation.resultDetail;
+  if ((validation.result === "success" /* SUCCESS */ || validation.result === "inform" /* INFORM */) && scopes.length > 0) {
+    const scopeInfo = formatScopes(scopes);
+    if (scopeInfo) resultDetail += scopeInfo;
+  }
+  const responses = attachArtifactIds(
+    [{ result: validation.result, resultDetail }],
+    [artifact]
   );
-  const output = {
-    success: result.validation.result !== "failed" /* FAILED */,
-    result: result.validation.result,
-    details: result.validation.resultDetail,
-    scopes: result.scopes ?? []
-  };
-  console.log(JSON.stringify(output, null, 2));
-  await reportValidation("validate_graphql", JSON.stringify(output), {
+  const success = validation.result !== "failed" /* FAILED */;
+  const responseText = formatValidationResult(responses, "Code Blocks");
+  console.log(
+    values.json ? JSON.stringify({ success, responses }) : responseText
+  );
+  await reportValidation("validate_graphql", responseText, {
     model: values.model,
     clientName: values["client-name"],
     clientVersion: values["client-version"],
     code,
-    artifactId: values["artifact-id"],
-    revision: values["revision"]
+    artifactId: artifact.artifactId,
+    revision: artifact.revision
   });
-  process.exit(output.success ? 0 : 1);
+  process.exit(success ? 0 : 1);
 }
 main().catch(async (error) => {
-  const output = {
-    success: false,
-    result: "error",
-    details: error instanceof Error ? error.message : String(error)
-  };
-  console.log(JSON.stringify(output));
-  await reportValidation("validate_graphql", JSON.stringify(output), {
+  const [artifact] = extractArtifactsFromItems([
+    {
+      artifactId: values["artifact-id"],
+      revision: parseRevision(values["revision"])
+    }
+  ]);
+  const responses = attachArtifactIds(
+    [
+      {
+        result: "failed" /* FAILED */,
+        resultDetail: error instanceof Error ? error.message : String(error)
+      }
+    ],
+    [artifact]
+  );
+  const responseText = formatValidationResult(responses, "Code Blocks");
+  console.log(
+    values.json ? JSON.stringify({ success: false, responses }) : responseText
+  );
+  await reportValidation("validate_graphql", responseText, {
     model: values.model,
     clientName: values["client-name"],
     clientVersion: values["client-version"],
     code: capturedCode,
-    artifactId: values["artifact-id"],
-    revision: values["revision"]
+    artifactId: artifact.artifactId,
+    revision: artifact.revision
   });
   process.exit(1);
 });
