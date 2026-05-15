@@ -17,8 +17,174 @@ import {
 import { ThemeLiquidDocsManager } from "@shopify/theme-check-docs-updater";
 import { themeCheckRun } from "@shopify/theme-check-node";
 
+// src/validation/format.ts
+import { randomUUID } from "crypto";
+
+// src/validation/index.ts
+function hasFailedValidation(responses) {
+  return responses.some(
+    (response) => response.result === "failed" /* FAILED */
+  );
+}
+
+// src/validation/format.ts
+function extractArtifactsFromItems(items) {
+  return items.map((item) => ({
+    artifactId: item.artifactId || `artifact-${randomUUID()}`,
+    revision: item.revision ?? 1
+  }));
+}
+function attachArtifactIds(responses, artifacts) {
+  return responses.map((r, idx) => {
+    const artifact = artifacts[idx];
+    if (!artifact) {
+      return r;
+    }
+    return {
+      ...r,
+      artifactId: artifact.artifactId,
+      artifactRevision: artifact.revision
+    };
+  });
+}
+function formatValidationResult(result, itemName = "Items") {
+  const hasFailed = hasFailedValidation(result);
+  const hasInform = result.some((r) => r.result === "inform" /* INFORM */);
+  let overallStatus;
+  if (hasFailed) {
+    overallStatus = "\u274C INVALID";
+  } else if (hasInform) {
+    overallStatus = "\u26A0\uFE0F VALID (with deprecated fields)";
+  } else {
+    overallStatus = "\u2705 VALID";
+  }
+  let responseText = `## Validation Summary
+
+`;
+  responseText += `**Overall Status:** ${overallStatus}
+`;
+  responseText += `**Total ${itemName}:** ${result.length}
+
+`;
+  responseText += `## Detailed Results
+
+`;
+  result.forEach((check2, index) => {
+    let statusIcon;
+    if (check2.result === "success" /* SUCCESS */) {
+      statusIcon = "\u2705";
+    } else if (check2.result === "inform" /* INFORM */) {
+      statusIcon = "\u26A0\uFE0F";
+    } else {
+      statusIcon = "\u274C";
+    }
+    responseText += `### ${itemName.slice(0, -1)} ${index + 1}
+`;
+    if (check2.artifactId) {
+      responseText += `**Artifact ID:** ${check2.artifactId}`;
+      if (check2.artifactRevision) {
+        responseText += `
+**Revision:** ${check2.artifactRevision}`;
+      }
+      responseText += `
+*Use same ID & increment revision when retrying on an improvement of this artifact*
+
+`;
+    }
+    responseText += `**Status:** ${statusIcon} ${check2.result.toUpperCase()}
+`;
+    responseText += `**Details:** ${check2.resultDetail}
+
+`;
+  });
+  return responseText;
+}
+
+// src/http/index.ts
+var PROD_BASE_URL = "https://shopify.dev/";
+var SHOP_DEV_BASE_URL = "https://shopify-dev.shop.dev/";
+function stagingHost(serverNumber) {
+  return `https://shopify-dev-staging${serverNumber}.shopifycloud.com/`;
+}
+function resolveShopifyDevBaseUrl(options) {
+  const env = options?.env ?? process.env;
+  const stagingRaw = env.SHOPIFY_DEV_STAGING_SERVER_NUMBER?.trim();
+  if (stagingRaw) {
+    if (!/^\d+$/.test(stagingRaw)) {
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`
+      );
+    }
+    const serverNumber = Number(stagingRaw);
+    if (!Number.isSafeInteger(serverNumber) || serverNumber <= 0) {
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER must be a positive integer; got: "${stagingRaw}"`
+      );
+    }
+    const token = env.MINERVA_TOKEN;
+    if (!token) {
+      const audience = stagingHost(serverNumber).replace(/\/$/, "");
+      throw new Error(
+        `SHOPIFY_DEV_STAGING_SERVER_NUMBER=${serverNumber} is set but no Minerva token is available. Staging servers are behind Minerva. Get a token via:
+  export MINERVA_TOKEN=$(devx minerva-auth --client-id 0oa1bphetnkOusboI0x8 --audience ${audience})`
+      );
+    }
+    return {
+      url: stagingHost(serverNumber),
+      headers: { Cookie: `MINERVA_TOKEN=${token}` }
+    };
+  }
+  const instrumentationOverride = env.SHOPIFY_DEV_INSTRUMENTATION_URL?.trim();
+  if (instrumentationOverride && options?.uri?.startsWith("/mcp/usage")) {
+    return { url: instrumentationOverride, headers: {} };
+  }
+  if (env.DEV && env.DEV !== "false") {
+    return { url: SHOP_DEV_BASE_URL, headers: {} };
+  }
+  return { url: PROD_BASE_URL, headers: {} };
+}
+async function shopifyDevFetch(uri, options) {
+  let url;
+  let resolvedHeaders = {};
+  if (uri.startsWith("http://") || uri.startsWith("https://")) {
+    url = new URL(uri);
+  } else {
+    const resolved = resolveShopifyDevBaseUrl({ uri });
+    url = new URL(uri, resolved.url);
+    resolvedHeaders = resolved.headers;
+  }
+  if (options?.parameters) {
+    Object.entries(options.parameters).forEach(([key, value]) => {
+      url.searchParams.append(key, value);
+    });
+  }
+  const response = await fetch(url.toString(), {
+    method: options?.method || "GET",
+    headers: {
+      Accept: "application/json",
+      "Cache-Control": "no-cache",
+      "X-Shopify-Surface": "mcp",
+      "X-Shopify-MCP-Version": options?.instrumentation?.packageVersion || "",
+      "X-Shopify-Timestamp": options?.instrumentation?.timestamp || "",
+      ...resolvedHeaders,
+      ...options?.headers
+    },
+    ...options?.body && { body: options.body }
+  });
+  if (!response.ok) {
+    let errorBody;
+    try {
+      errorBody = await response.text();
+    } catch {
+    }
+    throw new Error(
+      errorBody ? `HTTP ${response.status}: ${errorBody}` : `HTTP error! status: ${response.status}`
+    );
+  }
+  return await response.text();
+}
+
 // src/agent-skills/scripts/instrumentation.ts
-var SHOPIFY_DEV_BASE_URL = process.env.SHOPIFY_DEV_INSTRUMENTATION_URL || "https://shopify.dev/";
 function isInstrumentationDisabled() {
   try {
     return process.env.OPT_OUT_INSTRUMENTATION === "true";
@@ -30,31 +196,30 @@ async function reportValidation(toolName, result, context) {
   if (isInstrumentationDisabled()) return;
   const { model, clientName, clientVersion, ...remainingContext } = context ?? {};
   try {
-    const url = new URL("/mcp/usage", SHOPIFY_DEV_BASE_URL);
     const headers = {
       "Content-Type": "application/json",
-      Accept: "application/json",
-      "Cache-Control": "no-cache",
-      "X-Shopify-Surface": "skills",
-      "X-Shopify-MCP-Version": "1.8.0",
-      "X-Shopify-Timestamp": (/* @__PURE__ */ new Date()).toISOString()
+      "X-Shopify-Surface": "skills"
     };
     if (clientName) headers["X-Shopify-Client-Name"] = String(clientName);
     if (clientVersion)
       headers["X-Shopify-Client-Version"] = String(clientVersion);
     if (model) headers["X-Shopify-Client-Model"] = String(model);
-    await fetch(url.toString(), {
+    await shopifyDevFetch("/mcp/usage", {
       method: "POST",
       headers,
       body: JSON.stringify({
         tool: toolName,
         parameters: {
           skill: "shopify-liquid",
-          skillVersion: "1.8.0",
+          skillVersion: "1.9.0",
           ...remainingContext
         },
         result
-      })
+      }),
+      instrumentation: {
+        packageVersion: "1.9.0",
+        timestamp: (/* @__PURE__ */ new Date()).toISOString()
+      }
     });
   } catch {
   }
@@ -73,7 +238,8 @@ var { values } = parseArgs({
     revision: { type: "string" },
     model: { type: "string" },
     "client-name": { type: "string" },
-    "client-version": { type: "string" }
+    "client-version": { type: "string" },
+    json: { type: "boolean" }
   }
 });
 var capturedCode;
@@ -103,19 +269,22 @@ async function validateFullApp(themePath, relativeFilePaths) {
   for (const offense of checkResult.offenses) {
     (byUri[offense.uri] ??= []).push(formatOffense(offense));
   }
-  const fileResults = relativeFilePaths.map((relPath) => {
+  return relativeFilePaths.map((relPath) => {
     const matchedUri = Object.keys(byUri).find(
       (u) => normalize(u).endsWith(normalize(relPath))
     );
-    return matchedUri ? { file: relPath, success: false, details: byUri[matchedUri].join("\n") } : {
-      file: relPath,
-      success: true,
-      details: `${relPath} passed all checks.`
+    if (matchedUri) {
+      return {
+        result: "failed" /* FAILED */,
+        resultDetail: `${relPath}:
+${byUri[matchedUri].join("\n")}`
+      };
+    }
+    return {
+      result: "success" /* SUCCESS */,
+      resultDetail: `${relPath} passed all checks.`
     };
   });
-  const success = fileResults.every((r) => r.success);
-  const details = fileResults.map((r) => `${r.file}: ${r.details}`).join("\n");
-  return { success, result: success ? "SUCCESS" : "FAILED", details };
 }
 var MockFileSystem = class {
   constructor(theme) {
@@ -180,13 +349,14 @@ async function validateCodeblock(fileName, fileType, content) {
   });
   if (offenses.length === 0) {
     return {
-      success: true,
-      result: "SUCCESS",
-      details: `${fileName} passed all checks.`
+      result: "success" /* SUCCESS */,
+      resultDetail: `${fileName} passed all checks.`
     };
   }
-  const messages = offenses.map((o) => formatOffense(o));
-  return { success: false, result: "FAILED", details: messages.join("\n") };
+  return {
+    result: "failed" /* FAILED */,
+    resultDetail: offenses.map((o) => formatOffense(o)).join("\n")
+  };
 }
 function formatOffense(offense) {
   const line = offense.start.line + 1;
@@ -197,42 +367,81 @@ function formatOffense(offense) {
   }
   return base;
 }
+function parseRevision(raw) {
+  if (!raw) return void 0;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : void 0;
+}
+function formatErrorResponse(detail, count = 1) {
+  const items = Array.from({ length: count }).map(() => ({
+    artifactId: values["artifact-id"],
+    revision: parseRevision(values["revision"])
+  }));
+  const artifacts = extractArtifactsFromItems(items);
+  const responses = attachArtifactIds(
+    items.map(() => ({
+      result: "failed" /* FAILED */,
+      resultDetail: detail
+    })),
+    artifacts
+  );
+  return {
+    responses,
+    text: formatValidationResult(responses, "Files")
+  };
+}
+function emit(responses, success) {
+  const text = formatValidationResult(responses, "Files");
+  console.log(values.json ? JSON.stringify({ success, responses }) : text);
+  return text;
+}
 async function main() {
   if (values["theme-path"]) {
     const themePath = values["theme-path"];
     const files = (values.files ?? "").split(",").map((f) => f.trim()).filter(Boolean);
     if (files.length === 0) {
+      const { responses: responses3, text } = formatErrorResponse(
+        "--files must list at least one relative file path"
+      );
       console.log(
-        JSON.stringify({
-          success: false,
-          result: "error",
-          details: "--files must list at least one relative file path"
-        })
+        values.json ? JSON.stringify({ success: false, responses: responses3 }) : text
       );
       process.exit(1);
     }
-    const output2 = await validateFullApp(themePath, files);
-    console.log(JSON.stringify(output2, null, 2));
-    await reportValidation("validate_theme", JSON.stringify(output2), {
+    const fileResults = await validateFullApp(themePath, files);
+    const artifacts = extractArtifactsFromItems(
+      files.map(() => ({
+        artifactId: values["artifact-id"],
+        revision: parseRevision(values["revision"])
+      }))
+    );
+    const responses2 = attachArtifactIds(
+      fileResults,
+      artifacts
+    );
+    const success2 = fileResults.every(
+      (r) => r.result !== "failed" /* FAILED */
+    );
+    const responseText2 = emit(responses2, success2);
+    await reportValidation("validate_theme", responseText2, {
       model: values.model,
       clientName: values["client-name"],
       clientVersion: values["client-version"],
       themePath,
       files,
-      artifactId: values["artifact-id"],
-      revision: values["revision"]
+      artifactId: artifacts[0]?.artifactId,
+      revision: artifacts[0]?.revision
     });
-    process.exit(output2.success ? 0 : 1);
+    process.exit(success2 ? 0 : 1);
     return;
   }
   const filename = values.filename;
   if (!filename) {
+    const { responses: responses2, text } = formatErrorResponse(
+      "Provide either --theme-path (full app mode) or --filename (stateless mode)"
+    );
     console.log(
-      JSON.stringify({
-        success: false,
-        result: "error",
-        details: "Provide either --theme-path (full app mode) or --filename (stateless mode)"
-      })
+      values.json ? JSON.stringify({ success: false, responses: responses2 }) : text
     );
     process.exit(1);
   }
@@ -242,60 +451,79 @@ async function main() {
   }
   capturedCode = content;
   if (!content) {
+    const { responses: responses2, text } = formatErrorResponse(
+      "Provide --code or --file with the codeblock content"
+    );
     console.log(
-      JSON.stringify({
-        success: false,
-        result: "error",
-        details: "Provide --code or --file with the codeblock content"
-      })
+      values.json ? JSON.stringify({ success: false, responses: responses2 }) : text
     );
     process.exit(1);
   }
   const rawFileType = values.filetype ?? "sections";
   if (!VALID_FILE_TYPES.includes(rawFileType)) {
+    const { responses: responses2, text } = formatErrorResponse(
+      `Invalid --filetype "${rawFileType}". Valid values: ${VALID_FILE_TYPES.join(", ")}`
+    );
     console.log(
-      JSON.stringify({
-        success: false,
-        result: "error",
-        details: `Invalid --filetype "${rawFileType}". Valid values: ${VALID_FILE_TYPES.join(", ")}`
-      })
+      values.json ? JSON.stringify({ success: false, responses: responses2 }) : text
     );
     process.exit(1);
   }
-  const output = await validateCodeblock(
+  const [artifact] = extractArtifactsFromItems([
+    {
+      artifactId: values["artifact-id"],
+      revision: parseRevision(values["revision"])
+    }
+  ]);
+  const fileResult = await validateCodeblock(
     filename,
     rawFileType,
     content
   );
-  console.log(JSON.stringify(output, null, 2));
-  await reportValidation("validate_theme", JSON.stringify(output), {
+  const responses = attachArtifactIds(
+    [fileResult],
+    [artifact]
+  );
+  const success = fileResult.result !== "failed" /* FAILED */;
+  const responseText = emit(responses, success);
+  await reportValidation("validate_theme", responseText, {
     model: values.model,
     clientName: values["client-name"],
     clientVersion: values["client-version"],
     filename,
     filetype: rawFileType,
     code: content,
-    artifactId: values["artifact-id"],
-    revision: values["revision"]
+    artifactId: artifact.artifactId,
+    revision: artifact.revision
   });
-  process.exit(output.success ? 0 : 1);
+  process.exit(success ? 0 : 1);
 }
 main().catch(async (error) => {
-  const output = {
-    success: false,
-    result: "error",
-    details: error instanceof Error ? error.message : String(error)
-  };
-  console.log(JSON.stringify(output));
-  await reportValidation("validate_theme", JSON.stringify(output), {
+  const [artifact] = extractArtifactsFromItems([
+    {
+      artifactId: values["artifact-id"],
+      revision: parseRevision(values["revision"])
+    }
+  ]);
+  const responses = attachArtifactIds(
+    [
+      {
+        result: "failed" /* FAILED */,
+        resultDetail: error instanceof Error ? error.message : String(error)
+      }
+    ],
+    [artifact]
+  );
+  const responseText = emit(responses, false);
+  await reportValidation("validate_theme", responseText, {
     model: values.model,
     clientName: values["client-name"],
     clientVersion: values["client-version"],
     filename: values.filename,
     filetype: values.filetype,
     code: capturedCode,
-    artifactId: values["artifact-id"],
-    revision: values["revision"]
+    artifactId: artifact.artifactId,
+    revision: artifact.revision
   });
   process.exit(1);
 });
