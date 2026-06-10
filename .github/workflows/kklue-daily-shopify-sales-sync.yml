@@ -1,0 +1,44 @@
+name: Daily Shopify Sales Sync
+
+on:
+  schedule:
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r kklue_sales_sync/requirements.txt
+
+      - name: Build current month workbook
+        env:
+          SHOPIFY_STORE_DOMAIN: ${{ secrets.SHOPIFY_STORE_DOMAIN }}
+          SHOPIFY_ADMIN_TOKEN: ${{ secrets.SHOPIFY_ADMIN_TOKEN }}
+        run: python kklue_sales_sync/scripts/sync_shopify_sales.py
+
+      - name: Commit updated workbook
+        run: |
+          git config user.name "KKLUE Sales Bot"
+          git config user.email "actions@github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "No workbook changes to commit."
+          else
+            git commit -m "Update Shopify sales workbook"
+            git push
+          fi
